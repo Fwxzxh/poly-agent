@@ -184,6 +184,26 @@ pub fn message_with_function_response_to_json_test() {
   |> should.be_true
 }
 
+pub fn decode_response_without_candidates_field_test() {
+  let raw_json = "{\"usageMetadata\": {\"totalTokenCount\": 10}}"
+  let result = gemini.decode_response(raw_json)
+
+  result |> should.be_ok
+  result |> should.equal(Ok([]))
+}
+
+pub fn decode_stream_response_test() {
+  let raw_json =
+    "[
+    {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"A\"}]}}]},
+    {\"usageMetadata\": {\"totalTokenCount\": 10}}
+  ]"
+  let result = gemini.decode_stream_response(raw_json, fn(_) { Nil })
+
+  result |> should.be_ok
+  let assert Ok([types.Text("A", None)]) = result
+}
+
 pub fn build_request_body_minimal_test() {
   let history = [types.Message(role: "user", parts: [types.Text("Hi", None)])]
   let body = gemini.build_request_body(history, None, [])

@@ -25,22 +25,22 @@ stream_request(Url, Body, Callback) ->
                        [{sync, false}, {stream, self}])
     of
         {ok, RequestId} ->
-            collect_stream_data(RequestId, <<>>, Callback);
+            collect_stream_data(RequestId, <<>>, Callback, <<>>);
         {error, Reason} ->
             {error, Reason}
     end.
 
-collect_stream_data(RequestId, Acc, Callback) ->
+collect_stream_data(RequestId, Acc, Callback, FullAcc) ->
     receive
         {http, {RequestId, stream_start, _Headers}} ->
-            collect_stream_data(RequestId, Acc, Callback);
+            collect_stream_data(RequestId, Acc, Callback, FullAcc);
         {http, {RequestId, stream, Data}} ->
             NewAcc = <<Acc/binary, Data/binary>>,
             {Remaining, Objects} = parse_json_stream(NewAcc),
             lists:foreach(Callback, Objects),
-            collect_stream_data(RequestId, Remaining, Callback);
+            collect_stream_data(RequestId, Remaining, Callback, <<FullAcc/binary, Data/binary>>);
         {http, {RequestId, stream_end, _Headers}} ->
-            {ok, Acc};
+            {ok, FullAcc};
         {http, {RequestId, {error, Reason}}} ->
             {error, Reason}
     after 60000 ->

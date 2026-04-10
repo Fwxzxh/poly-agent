@@ -103,47 +103,7 @@ pub fn tool_to_json(tool: types.Tool) -> json.Json {
 pub fn decode_response(
   json_string: String,
 ) -> Result(List(types.Part), json.DecodeError) {
-  let part_decoder =
-    decode.one_of(
-      {
-        use text <- decode.field("text", decode.string)
-        use sig <- decode.optional_field(
-          "thoughtSignature",
-          None,
-          decode.optional(decode.string),
-        )
-        use is_thought <- decode.optional_field("thought", False, decode.bool)
-        case is_thought {
-          True -> decode.success(types.Thought(text, sig))
-          False -> decode.success(types.Text(text, sig))
-        }
-      },
-      [
-        {
-          use name <- decode.subfield(["functionCall", "name"], decode.string)
-          use args <- decode.subfield(["functionCall", "args"], decode.dynamic)
-          use sig <- decode.optional_field(
-            "thoughtSignature",
-            None,
-            decode.optional(decode.string),
-          )
-          decode.success(types.FunctionCall(name, args, sig))
-        },
-      ],
-    )
-
-  let decoder = {
-    use parts_list <- decode.field(
-      "candidates",
-      decode.list(decode.at(["content", "parts"], decode.list(part_decoder))),
-    )
-    case parts_list {
-      [parts, ..] -> decode.success(parts)
-      [] -> decode.success([])
-    }
-  }
-
-  json.parse(from: json_string, using: decoder)
+  json.parse(from: json_string, using: candidate_list_decoder())
 }
 
 /// Constructs the JSON request body for the Gemini API.
@@ -249,7 +209,11 @@ fn execute_standard_call(
   debug: Bool,
 ) -> Result(List(types.Part), Nil) {
   use req <- result.try(
-    request.to(url) |> result.replace_error(io.println("--- URL Error ---")),
+    request.to(url)
+    |> result.map_error(fn(_) {
+      io.println("--- URL Error ---")
+      Nil
+    }),
   )
 
   let req =
@@ -259,7 +223,11 @@ fn execute_standard_call(
     |> request.set_header("content-type", "application/json")
 
   use resp <- result.try(
-    httpc.send(req) |> result.replace_error(io.println("--- Network Error ---")),
+    httpc.send(req)
+    |> result.map_error(fn(_) {
+      io.println("--- Network Error ---")
+      Nil
+    }),
   )
 
   case debug {
@@ -352,43 +320,47 @@ pub fn decode_stream_response(
 }
 
 fn candidate_list_decoder() -> decode.Decoder(List(types.Part)) {
-  let part_decoder =
-    decode.one_of(
+  decode.one_of(
+    {
+      use parts_list <- decode.field(
+        "candidates",
+        decode.list(decode.at(["content", "parts"], decode.list(part_decoder()))),
+      )
+      case parts_list {
+        [parts, ..] -> decode.success(parts)
+        [] -> decode.success([])
+      }
+    },
+    [decode.success([])],
+  )
+}
+
+fn part_decoder() -> decode.Decoder(types.Part) {
+  decode.one_of(
+    {
+      use text <- decode.field("text", decode.string)
+      use sig <- decode.optional_field(
+        "thoughtSignature",
+        None,
+        decode.optional(decode.string),
+      )
+      use is_thought <- decode.optional_field("thought", False, decode.bool)
+      case is_thought {
+        True -> decode.success(types.Thought(text, sig))
+        False -> decode.success(types.Text(text, sig))
+      }
+    },
+    [
       {
-        use text <- decode.field("text", decode.string)
+        use name <- decode.subfield(["functionCall", "name"], decode.string)
+        use args <- decode.subfield(["functionCall", "args"], decode.dynamic)
         use sig <- decode.optional_field(
           "thoughtSignature",
           None,
           decode.optional(decode.string),
         )
-        use is_thought <- decode.optional_field("thought", False, decode.bool)
-        case is_thought {
-          True -> decode.success(types.Thought(text, sig))
-          False -> decode.success(types.Text(text, sig))
-        }
+        decode.success(types.FunctionCall(name, args, sig))
       },
-      [
-        {
-          use name <- decode.subfield(["functionCall", "name"], decode.string)
-          use args <- decode.subfield(["functionCall", "args"], decode.dynamic)
-          use sig <- decode.optional_field(
-            "thoughtSignature",
-            None,
-            decode.optional(decode.string),
-          )
-          decode.success(types.FunctionCall(name, args, sig))
-        },
-      ],
-    )
-
-  {
-    use parts_list <- decode.field(
-      "candidates",
-      decode.list(decode.at(["content", "parts"], decode.list(part_decoder))),
-    )
-    case parts_list {
-      [parts, ..] -> decode.success(parts)
-      [] -> decode.success([])
-    }
-  }
+    ],
+  )
 }
