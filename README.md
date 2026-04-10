@@ -5,10 +5,12 @@ Poly is a flexible and extensible AI Agent framework built with **Gleam**, lever
 ## Features
 
 - 🤖 **Actor-Based Agent**: Built on Gleam's `otp/actor`, providing a clean, concurrent interface for conversation state management.
-- 🛠️ **Extensible Tooling**: Easily define new tools with a type-safe `ToolBuilder`.
-- 🧠 **Recursive Reasoning**: Automatically handles the "Think-Act-Observe" loop, allowing the agent to call multiple tools in sequence to solve complex tasks.
-- 💎 **Gemini Integration**: Native support for Google Gemini models, including support for "Thinking" (reasoning) parts.
-- 🛠️ **Developer Skills**: Built-in capabilities for filesystem access, shell command execution, and HTTP requests.
+- ⚡ **Parallel Execution**: Automatically executes multiple tool calls in parallel using Erlang processes to minimize latency.
+- 🔒 **Safety First**: Integrated manual approval mechanism for sensitive tools (like writing files or executing shell commands).
+- 🌊 **Real-time Streaming**: Supports streaming of both model reasoning ("Thinking") and final text responses.
+- 🧠 **Recursive Reasoning**: Automatically handles the "Think-Act-Observe" loop, allowing the agent to call multiple tools in sequence.
+- 🛠️ **Developer Skills**: Advanced built-in capabilities for filesystem access (`grep`, `find`, `write`), shell execution, and HTTP requests.
+- 💎 **Gemini Integration**: Native support for Google Gemini v1beta API.
 
 ## Getting Started
 
@@ -25,51 +27,68 @@ gleam add poly
 
 ### Configuration
 
-Create a `.env` file in your project root:
+Poly uses environment variables for configuration. Create a `.env` file (see `.env.example`):
 
 ```env
 GOOGLE_API_KEY=your_api_key_here
+GOOGLE_MODEL=gemini-3.1-flash-lite-preview
+STREAMING=true
+VERBOSE=false
 DEBUG=false
 ```
 
 ## Basic Usage
 
-Poly comes with a CLI interface in its `main` module, but you can also use it as a library.
+Poly comes with a CLI interface, but it's designed to be used as a library.
 
 ```gleam
 import agent
+import common/config
 import providers/gemini
 import skills/developer
 import gleam/option.{Some}
 import gleam/erlang/process
 
 pub fn main() {
-  let api_key = "your-api-key"
+  // 1. Load configuration
+  let assert Ok(cfg) = config.load()
   
-  // 1. Define available tools
+  // 2. Define available tools
   let tools = developer.get_tools()
 
-  // 2. Start the Agent actor
+  // 3. Start the Agent actor
   let assert Ok(started) = agent.start(
-    api_key: api_key,
+    config: cfg,
     provider: gemini.gemini_provider(),
     initial_tools: tools,
     system_instruction: Some("You are a helpful assistant."),
     on_event: fn(event) { 
-      // Handle events like ThoughtEvent or ToolStartEvent here
+      // Handle events like ThoughtEvent, ToolStartEvent, or StreamTextEvent
       Nil 
-    },
-    debug: False,
+    }
   )
 
   let agent_subject = started.data
 
-  // 3. Send a message and wait for the response
+  // 4. Send a message
   let reply_subject = process.new_subject()
-  process.send(agent_subject, agent.UserMessage("List the files in the current directory", reply_subject))
+  process.send(agent_subject, agent.UserMessage("Analyze this project", reply_subject))
   
-  let response = process.receive_forever(reply_subject)
-  // response will contain the agent's final answer after running the tools
+  // 5. Handle responses (including potential approval requests)
+  handle_responses(reply_subject)
+}
+
+fn handle_responses(reply_subject) {
+  case process.receive_forever(reply_subject) {
+    agent.FinalResponse(text) -> {
+      // Final result is ready
+    }
+    agent.ApprovalRequest(name, args, approval_reply) -> {
+      // User must approve sensitive tools
+      process.send(approval_reply, True)
+      handle_responses(reply_subject)
+    }
+  }
 }
 ```
 
