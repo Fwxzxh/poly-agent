@@ -12,7 +12,9 @@ Poly es un framework de agentes de IA modular y extensible escrito en **Gleam**,
   - `net.gleam`: Peticiones HTTP GET.
   - `system.gleam`: Información del host (SO, arquitectura).
 - **Skills (`src/skills/`)**: Agrupaciones lógicas de herramientas. `developer.gleam` agrupa las herramientas de sistema de archivos, shell y red.
-- **Common (`src/common/types.gleam`)**: Definiciones de tipos compartidos para mensajes, partes (texto, pensamientos, llamadas a funciones) y eventos.
+- **Common (`src/common/`)**: Definiciones compartidas:
+  - `types.gleam`: Mensajes, partes, eventos.
+  - `config.gleam`: Gestión centralizada de la configuración (env vars).
 
 ## Configuración
 

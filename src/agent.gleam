@@ -1,6 +1,7 @@
 //// This module implements the AI Agent using the Gleam Actor (OTP) pattern.
 //// It manages conversation state and the reasoning loop for tool usage.
 
+import common/config
 import common/types
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
@@ -15,24 +16,18 @@ import tools/utils
 /// Internal state of the agent.
 pub type State {
   State(
+    /// Configuration settings.
+    config: config.Config,
     /// History of messages in the current conversation.
     history: List(types.Message),
     /// System context or instructions.
     system_instruction: Option(String),
-    /// API Key for the provider.
-    api_key: String,
-    /// The model identifier.
-    model: String,
     /// The provider implementation.
     provider: provider.Provider,
     /// List of tools available to the agent.
     tools: List(utils.Tool),
     /// Callback for agent events.
     on_event: fn(types.AgentEvent) -> Nil,
-    /// Whether to print raw requests and responses.
-    debug: Bool,
-    /// Whether to stream responses from the provider.
-    streaming: Bool,
   )
 }
 
@@ -51,26 +46,20 @@ pub type AgentMessage {
 
 /// Starts the agent actor with an initial configuration.
 pub fn start(
-  api_key: String,
-  model: String,
+  config: config.Config,
   provider: provider.Provider,
   initial_tools: List(utils.Tool),
   system_instruction: Option(String),
   on_event: fn(types.AgentEvent) -> Nil,
-  debug: Bool,
-  streaming: Bool,
 ) {
   let initial_state =
     State(
+      config: config,
       history: [],
       system_instruction: system_instruction,
-      api_key: api_key,
-      model: model,
       provider: provider,
       tools: initial_tools,
       on_event: on_event,
-      debug: debug,
-      streaming: streaming,
     )
 
   actor.new(initial_state)
@@ -89,14 +78,11 @@ fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) 
         run_reasoning_loop(
           new_history,
           state.system_instruction,
-          state.api_key,
-          state.model,
+          state.config,
           state.provider,
           state.tools,
           state.on_event,
           10,
-          state.debug,
-          state.streaming,
           reply_to,
         )
 
@@ -119,14 +105,11 @@ fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) 
 fn run_reasoning_loop(
   history: List(types.Message),
   system_instruction: Option(String),
-  api_key: String,
-  model: String,
+  config: config.Config,
   provider: provider.Provider,
   available_tools: List(utils.Tool),
   on_event: fn(types.AgentEvent) -> Nil,
   max_steps: Int,
-  debug: Bool,
-  streaming: Bool,
   reply_to: Subject(AgentResponse),
 ) -> #(String, List(types.Message)) {
   case max_steps {
@@ -137,14 +120,15 @@ fn run_reasoning_loop(
         provider.call(
           history,
           system_instruction,
-          api_key,
-          model,
+          config.api_key,
+          config.model,
           tool_declarations,
-          debug,
-          streaming,
+          config.debug,
+          config.streaming,
           fn(part) {
             case part {
               types.Text(text, _) -> on_event(types.StreamTextEvent(text))
+              types.Thought(text, _) -> on_event(types.ThoughtEvent(text))
               _ -> Nil
             }
           },
@@ -173,14 +157,11 @@ fn run_reasoning_loop(
               run_reasoning_loop(
                 list.append(updated_history, [tool_msg]),
                 system_instruction,
-                api_key,
-                model,
+                config,
                 provider,
                 available_tools,
                 on_event,
                 max_steps - 1,
-                debug,
-                streaming,
                 reply_to,
               )
             }

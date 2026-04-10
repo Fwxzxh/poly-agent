@@ -5,9 +5,9 @@
 //// the user input loop.
 
 import agent
+import common/config
 import common/types
 import dot_env
-import dot_env/env
 import gleam/erlang/process
 import gleam/io
 import gleam/json
@@ -17,105 +17,61 @@ import skills/developer
 import tools/system
 
 /// The entry point for the Poly AI Agent CLI.
-///
-/// It performs the following steps:
-/// 1. Loads environment variables from a `.env` file.
-/// 2. Retrieves the `GOOGLE_API_KEY`.
-/// 3. Initializes the reasoning tools (Developer skills).
-/// 4. Starts the Agent actor using the Gemini provider.
-/// 5. Enters an interactive chat loop.
 pub fn main() {
   // Load the .env file if it exists
   dot_env.load_default()
 
-  let api_key = get_api_key()
-  let model = get_model()
-  let debug = is_debug_enabled()
-  let streaming = is_streaming_enabled()
-  let available_tools = developer.get_tools()
+  case config.load() {
+    Ok(cfg) -> {
+      let available_tools = developer.get_tools()
 
-  // Prepare system context with host information
-  let system_info = system.get_info()
-  let system_prompt =
-    "You are Poly Agent, a helpful AI assistant.\n"
-    <> system.format_as_context(system_info)
+      // Prepare system context with host information
+      let system_info = system.get_info()
+      let system_prompt =
+        "You are Poly Agent, a helpful AI assistant.\n"
+        <> system.format_as_context(system_info)
 
-  // Start the agent actor
-  let assert Ok(started) =
-    agent.start(
-      api_key,
-      model,
-      gemini.gemini_provider(),
-      available_tools,
-      Some(system_prompt),
-      handle_event,
-      debug,
-      streaming,
-    )
+      // Start the agent actor
+      let assert Ok(started) =
+        agent.start(
+          cfg,
+          gemini.gemini_provider(),
+          available_tools,
+          Some(system_prompt),
+          handle_event(cfg, _),
+        )
 
-  let agent_subject = started.data
+      let agent_subject = started.data
 
-  io.println("--- Poly AI Agent (Gemini) ---")
-  io.println("Configuración cargada correctamente.")
-  io.println("Escribe tu mensaje y presiona Enter. Escribe 'exit' para salir.")
-
-  chat_loop(agent_subject, streaming)
-}
-
-fn get_api_key() -> String {
-  case env.get_string("GOOGLE_API_KEY") {
-    Ok(key) -> key
-    Error(_) -> {
-      io.println("Error: GOOGLE_API_KEY no encontrada.")
+      io.println("--- Poly AI Agent (Gemini) ---")
+      io.println("Configuración cargada correctamente.")
       io.println(
-        "Asegúrate de tener un archivo .env o la variable configurada.",
+        "Escribe tu mensaje y presiona Enter. Escribe 'exit' para salir.",
       )
-      panic as "Missing API key"
+
+      chat_loop(agent_subject, cfg.streaming)
     }
-  }
-}
-
-fn get_model() -> String {
-  case env.get_string("GOOGLE_MODEL") {
-    Ok(model) -> model
-    Error(_) -> "gemini-3.1-flash-lite-preview"
-  }
-}
-
-fn is_debug_enabled() -> Bool {
-  case env.get_string("DEBUG") {
-    Ok("true") -> True
-    _ -> False
-  }
-}
-
-fn is_verbose_enabled() -> Bool {
-  case env.get_string("VERBOSE") {
-    Ok("true") -> True
-    _ -> False
-  }
-}
-
-fn is_streaming_enabled() -> Bool {
-  case env.get_string("STREAMING") {
-    Ok("true") -> True
-    _ -> False
+    Error(err) -> {
+      io.println("Error cargando configuración: " <> err)
+      io.println("Asegúrate de tener un archivo .env configurado.")
+    }
   }
 }
 
 /// Handles events emitted by the agent during its reasoning process.
 /// This implementation prints thoughts and tool calls to the console with ANSI colors.
-fn handle_event(event: types.AgentEvent) {
+fn handle_event(cfg: config.Config, event: types.AgentEvent) {
   case event {
     types.ThoughtEvent(text) -> {
-      // Print model reasoning in italics/dimmed
-      io.println("\u{1b}[2m\u{1b}[3m> Thinking: " <> text <> "\u{1b}[0m")
+      // Print model reasoning in italics/dimmed. 
+      // We use print instead of println to support streaming thoughts.
+      io.print("\u{1b}[2m\u{1b}[3m" <> text <> "\u{1b}[0m")
     }
     types.ToolStartEvent(name, args) -> {
       let args_str = json.to_string(args)
       // Print tool execution in bold blue
       io.println(
-        "\u{1b}[34m\u{1b}[1m> Tool Call: "
+        "\n\u{1b}[34m\u{1b}[1m> Tool Call: "
         <> name
         <> "("
         <> args_str
@@ -123,7 +79,7 @@ fn handle_event(event: types.AgentEvent) {
       )
     }
     types.ToolResultEvent(name, result) -> {
-      case is_verbose_enabled() {
+      case cfg.verbose {
         True -> {
           let result_str = json.to_string(result)
           io.println(

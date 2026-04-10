@@ -199,20 +199,6 @@ fn identity(x: a) -> a {
   x
 }
 
-fn extract_text_from_chunk(chunk: String) -> String {
-  // Hacky way to extract text from a partial Gemini JSON chunk
-  // Look for "text": "..."
-  case string.split(chunk, on: "\"text\": \"") {
-    [_, rest, ..] -> {
-      case string.split(rest, on: "\"") {
-        [text, ..] -> string.replace(text, each: "\\n", with: "\n")
-        _ -> ""
-      }
-    }
-    _ -> ""
-  }
-}
-
 /// Makes the HTTP request to the Gemini API.
 pub fn call(
   history: List(types.Message),
@@ -250,16 +236,15 @@ pub fn call(
 
   case streaming {
     True -> {
-      // For streaming, we'll use a custom FFI to handle the chunks
+      // For streaming, our robust Erlang FFI gives us complete JSON objects one by one
       case
         stream_request(url, body, fn(chunk) {
-          // Try to extract text from this chunk and call on_part
           case bit_array.to_string(chunk) {
-            Ok(s) -> {
-              let text = extract_text_from_chunk(s)
-              case text {
-                "" -> Nil
-                _ -> on_part(types.Text(text, None))
+            Ok(json_str) -> {
+              // Parse this single chunk as a response
+              case decode_response(json_str) {
+                Ok(parts) -> list.each(parts, on_part)
+                Error(_) -> Nil
               }
             }
             Error(_) -> Nil
@@ -269,6 +254,8 @@ pub fn call(
         Ok(full_bit_array) -> {
           case bit_array.to_string(full_bit_array) {
             Ok(full_body) -> {
+              // The full body is a JSON array [{}, {}]
+              // We already streamed the parts, but we need to return the full list
               case decode_stream_response(full_body, on_part) {
                 Ok(parts) -> Ok(parts)
                 Error(_) -> Error(Nil)
@@ -346,7 +333,7 @@ fn stream_request(
 
 pub fn decode_stream_response(
   json_string: String,
-  on_part: fn(types.Part) -> Nil,
+  _on_part: fn(types.Part) -> Nil,
 ) -> Result(List(types.Part), json.DecodeError) {
   // Gemini stream returns a JSON array of response objects
   let decoder = decode.list(candidate_list_decoder())

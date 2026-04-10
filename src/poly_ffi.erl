@@ -1,9 +1,13 @@
 -module(poly_ffi).
 
--export([identity/1, read_line/0, run_command/1, get_system_info/0, stream_request/3]).
+-export([identity/1, read_line/0, run_command/1, get_system_info/0, stream_request/3, set_env/2]).
 
 identity(X) ->
     X.
+
+set_env(Name, Value) ->
+    os:putenv(binary_to_list(Name), binary_to_list(Value)),
+    ok.
 
 read_line() ->
     io:get_line("").
@@ -31,8 +35,10 @@ collect_stream_data(RequestId, Acc, Callback) ->
         {http, {RequestId, stream_start, _Headers}} ->
             collect_stream_data(RequestId, Acc, Callback);
         {http, {RequestId, stream, Data}} ->
-            Callback(Data),
-            collect_stream_data(RequestId, <<Acc/binary, Data/binary>>, Callback);
+            NewAcc = <<Acc/binary, Data/binary>>,
+            {Remaining, Objects} = parse_json_stream(NewAcc),
+            lists:foreach(Callback, Objects),
+            collect_stream_data(RequestId, Remaining, Callback);
         {http, {RequestId, stream_end, _Headers}} ->
             {ok, Acc};
         {http, {RequestId, {error, Reason}}} ->
@@ -40,6 +46,38 @@ collect_stream_data(RequestId, Acc, Callback) ->
     after 60000 ->
         {error, timeout}
     end.
+
+parse_json_stream(Data) ->
+    % Strip leading whitespace, commas, and array start
+    case Data of
+        <<C, Rest/binary>> when C =:= $[; C =:= $,; C =:= $\s; C =:= $\n; C =:= $\r; C =:= $\t ->
+            parse_json_stream(Rest);
+        _ ->
+            case find_complete_json(Data, 0, 0, <<>>) of
+                {ok, Object, Remaining} ->
+                    {RestRemaining, FurtherObjects} = parse_json_stream(Remaining),
+                    {RestRemaining, [Object | FurtherObjects]};
+                incomplete ->
+                    {Data, []}
+            end
+    end.
+
+find_complete_json(<<>>, _, _, _) ->
+    incomplete;
+find_complete_json(<<$\\, C, Rest/binary>>, Braces, 1, Acc) ->
+    find_complete_json(Rest, Braces, 1, <<Acc/binary, $\\, C>>);
+find_complete_json(<<$", Rest/binary>>, Braces, 0, Acc) ->
+    find_complete_json(Rest, Braces, 1, <<Acc/binary, $">>);
+find_complete_json(<<$", Rest/binary>>, Braces, 1, Acc) ->
+    find_complete_json(Rest, Braces, 0, <<Acc/binary, $">>);
+find_complete_json(<<${, Rest/binary>>, Braces, 0, Acc) ->
+    find_complete_json(Rest, Braces + 1, 0, <<Acc/binary, ${>>);
+find_complete_json(<<$}, Rest/binary>>, 1, 0, Acc) ->
+    {ok, <<Acc/binary, $}>>, Rest};
+find_complete_json(<<$}, Rest/binary>>, Braces, 0, Acc) when Braces > 1 ->
+    find_complete_json(Rest, Braces - 1, 0, <<Acc/binary, $}>>);
+find_complete_json(<<C, Rest/binary>>, Braces, Quotes, Acc) ->
+    find_complete_json(Rest, Braces, Quotes, <<Acc/binary, C>>).
 
 run_command(Command) ->
     Port =
