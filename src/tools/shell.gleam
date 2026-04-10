@@ -4,7 +4,14 @@ import gleam/dynamic/decode
 import gleam/json
 import tools/utils
 
-/// Returns the "execute_command" tool.
+/// Returns the `execute_command` tool.
+///
+/// This tool allows the agent to execute arbitrary shell commands on the
+/// host system. It returns both the exit code and the command output
+/// (or error message).
+///
+/// **Security Note:** This tool gives the agent significant power over the
+/// host system. Use with caution.
 pub fn execute_command_tool() -> utils.Tool {
   utils.new(
     "execute_command",

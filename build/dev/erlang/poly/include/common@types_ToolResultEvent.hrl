@@ -1,1 +1,0 @@
--record(tool_result_event, {name :: binary(), result :: gleam@json:json()}).

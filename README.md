@@ -81,6 +81,17 @@ pub fn main() {
 - `src/skills/`: Collections of tools grouped by capability (e.g., `developer`).
 - `src/common/types.gleam`: Shared types for messages, parts, and events.
 
+## Architecture
+
+Poly is built on a "Think-Act-Observe" recursive loop:
+
+1.  **Think**: The Agent sends the conversation history and available tool declarations to the LLM (e.g., Gemini). The LLM returns its reasoning and/or a request to call one or more tools.
+2.  **Act**: If the LLM requests tool usage, the Agent executes the corresponding Gleam functions (Executors) defined in the tools.
+3.  **Observe**: The results of the tool executions are added to the conversation history as `function` messages.
+4.  **Repeat**: The loop recurses, sending the updated history back to the LLM so it can analyze the results and provide a final answer or request further actions.
+
+This entire process is managed by a Gleam **Actor**, which maintains the conversation state safely and concurrently.
+
 ## Creating Your Own Tools
 
 You can create custom tools using the `utils.new` builder:

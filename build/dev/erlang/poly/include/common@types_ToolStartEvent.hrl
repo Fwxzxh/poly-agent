@@ -1,1 +1,0 @@
--record(tool_start_event, {name :: binary(), args :: gleam@json:json()}).

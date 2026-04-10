@@ -1,7 +1,7 @@
 //// This module implements the AI Agent using the Gleam Actor (OTP) pattern.
 //// It manages conversation state and the reasoning loop for tool usage.
 
-import common/types as types
+import common/types
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -92,9 +92,16 @@ fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) 
   }
 }
 
-/// Orchestrates the conversation with the AI provider.
-/// If the model requests tool usage, this function executes the tools
-/// and sends the results back to the provider in a recursive loop.
+/// Orchestrates the conversation with the AI provider using a recursive loop.
+///
+/// This function:
+/// 1. Sends the current history and tool declarations to the provider.
+/// 2. Processes the model's response (text and/or function calls).
+/// 3. If there are function calls:
+///    - Executes the corresponding tools.
+///    - Adds the results to the history as `function` messages.
+///    - Recurses to let the model "observe" the results and continue its reasoning.
+/// 4. If there are no function calls, it returns the final text response.
 fn run_reasoning_loop(
   history: List(types.Message),
   system_instruction: Option(String),
@@ -159,6 +166,15 @@ fn run_reasoning_loop(
   }
 }
 
+/// The accumulated messages in the conversation.
+/// Optional system instructions to guide the model's behavior.
+/// API Key for the provider.
+/// The model ID to use (e.g., "gemini-1.5-flash").
+/// The provider implementation (e.g., Gemini).
+/// The set of tools the model is allowed to use.
+/// A callback to emit events during the loop.
+/// Maximum number of tool-execution cycles to prevent infinite loops.
+/// Whether to log internal requests/responses.
 fn handle_part_events(part: types.Part, on_event: fn(types.AgentEvent) -> Nil) {
   case part {
     types.Thought(text, _) -> on_event(types.ThoughtEvent(text))
@@ -194,7 +210,9 @@ pub fn execute_tools(
 }
 
 /// Helper to filter out and identify function calls from a list of parts.
-pub fn get_function_calls(parts: List(types.Part)) -> List(#(String, decode.Dynamic)) {
+pub fn get_function_calls(
+  parts: List(types.Part),
+) -> List(#(String, decode.Dynamic)) {
   list.filter_map(parts, fn(p) {
     case p {
       types.FunctionCall(name, args, _sig) -> Ok(#(name, args))

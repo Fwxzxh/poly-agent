@@ -14,6 +14,10 @@ import gleam/string
 
 import providers/interface as provider
 
+/// Creates a new `Provider` instance for Google Gemini.
+///
+/// This provider uses the `v1beta` API which supports "Thinking" (reasoning)
+/// and function calling.
 pub fn gemini_provider() -> provider.Provider {
   provider.Provider(name: "gemini", call: call)
 }

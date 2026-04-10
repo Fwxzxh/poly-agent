@@ -104,7 +104,10 @@ fn handle_event(event: types.AgentEvent) {
   }
 }
 
-/// The interactive loop that reads user input and sends it to the agent.
+/// Enters an interactive chat loop that reads user input and prints agent responses.
+///
+/// It uses a synchronous `process.receive_forever` to wait for the agent's
+/// full reasoning process to complete before prompting for the next input.
 fn chat_loop(agent_subject) {
   io.print("> ")
   let input = read_line()
@@ -115,7 +118,8 @@ fn chat_loop(agent_subject) {
       let reply_subject = process.new_subject()
       process.send(agent_subject, agent.UserMessage(input, reply_subject))
 
-      // Block until the agent finishes its reasoning loop and responds
+      // Block until the agent finishes its reasoning loop and responds.
+      // The reasoning loop might involve multiple tool calls.
       let response = process.receive_forever(reply_subject)
       io.println("Agent: " <> response)
       chat_loop(agent_subject)

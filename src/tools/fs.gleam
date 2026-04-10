@@ -6,7 +6,10 @@ import gleam/string
 import simplifile
 import tools/utils
 
-/// Returns the "read_file" tool.
+/// Returns the `read_file` tool.
+///
+/// This tool allows the agent to read the content of any file on the local
+/// filesystem. It takes a `path` argument.
 pub fn read_file_tool() -> utils.Tool {
   utils.new(
     "read_file",
@@ -18,6 +21,20 @@ pub fn read_file_tool() -> utils.Tool {
     required: True,
   )
   |> utils.build_tool(read_file_executor)
+}
+
+/// Returns the `list_files` tool.
+///
+/// This tool allows the agent to see what files are available in a directory.
+/// It takes a `directory` argument.
+pub fn list_files_tool() -> utils.Tool {
+  utils.new("list_files", "Lists all files in a given directory.")
+  |> utils.with_string_param(
+    "directory",
+    "The directory path to list files from",
+    required: True,
+  )
+  |> utils.build_tool(list_files_executor)
 }
 
 fn read_file_executor(args: json.Json) -> json.Json {
@@ -44,17 +61,6 @@ fn read_file_executor(args: json.Json) -> json.Json {
         #("error", json.string("Missing or invalid 'path' argument")),
       ])
   }
-}
-
-/// Returns the "list_files" tool.
-pub fn list_files_tool() -> utils.Tool {
-  utils.new("list_files", "Lists all files in a given directory.")
-  |> utils.with_string_param(
-    "directory",
-    "The directory path to list files from",
-    required: True,
-  )
-  |> utils.build_tool(list_files_executor)
 }
 
 fn list_files_executor(args: json.Json) -> json.Json {

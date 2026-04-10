@@ -8,7 +8,11 @@ import gleam/json
 import gleam/string
 import tools/utils
 
-/// Returns the "http_get" tool.
+/// Returns the `http_get` tool.
+///
+/// This tool allows the agent to perform HTTP GET requests. It is useful for
+/// fetching documentation, reading API responses, or downloading content
+/// from the internet.
 pub fn http_get_tool() -> utils.Tool {
   utils.new(
     "http_get",

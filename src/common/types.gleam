@@ -31,15 +31,24 @@ pub type Part {
 }
 
 /// A collection of tools that the model can use.
+///
+/// This type is used to represent the set of capabilities provided to the model
+/// during a single request.
 pub type Tool {
   Tool(function_declarations: List(FunctionDeclaration))
 }
 
 /// The description of a single function available for the model to call.
+///
+/// This structure follows the expected format for function declarations in
+/// most AI provider APIs (like Gemini or OpenAI).
 pub type FunctionDeclaration {
   FunctionDeclaration(
+    /// The name of the function (e.g., "read_file").
     name: String,
+    /// A clear description of what the function does and when to use it.
     description: String,
+    /// A JSON Schema object defining the expected arguments for the function.
     parameters: Option(json.Json),
   )
 }

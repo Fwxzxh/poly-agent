@@ -1,6 +1,6 @@
 # Gleam build artifacts
-build/
-gleam.toml.lock
+/build
+/gleam.toml.lock
 
 # Environment variables / Secrets
 .env

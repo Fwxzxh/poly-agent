@@ -1,1 +1,0 @@
--record(message, {role :: binary(), parts :: list(common@types:part())}).
