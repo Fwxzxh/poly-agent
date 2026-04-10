@@ -12,6 +12,7 @@ import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 
 import providers/interface as provider
@@ -210,19 +211,7 @@ pub fn call(
   streaming: Bool,
   on_part: fn(types.Part) -> Nil,
 ) -> Result(List(types.Part), Nil) {
-  let endpoint = case streaming {
-    True -> "streamGenerateContent"
-    False -> "generateContent"
-  }
-
-  let url =
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    <> model
-    <> ":"
-    <> endpoint
-    <> "?key="
-    <> api_key
-
+  let url = get_url(model, api_key, streaming)
   let body = build_request_body(history, system_instruction, tool_declarations)
 
   case debug {
@@ -235,92 +224,104 @@ pub fn call(
   }
 
   case streaming {
+    True -> execute_streaming_call(url, body, on_part)
+    False -> execute_standard_call(url, body, debug)
+  }
+}
+
+fn get_url(model: String, api_key: String, streaming: Bool) -> String {
+  let endpoint = case streaming {
+    True -> "streamGenerateContent"
+    False -> "generateContent"
+  }
+
+  "https://generativelanguage.googleapis.com/v1beta/models/"
+  <> model
+  <> ":"
+  <> endpoint
+  <> "?key="
+  <> api_key
+}
+
+fn execute_standard_call(
+  url: String,
+  body: String,
+  debug: Bool,
+) -> Result(List(types.Part), Nil) {
+  use req <- result.try(
+    request.to(url) |> result.replace_error(io.println("--- URL Error ---")),
+  )
+
+  let req =
+    req
+    |> request.set_method(http.Post)
+    |> request.set_body(body)
+    |> request.set_header("content-type", "application/json")
+
+  use resp <- result.try(
+    httpc.send(req) |> result.replace_error(io.println("--- Network Error ---")),
+  )
+
+  case debug {
     True -> {
-      // For streaming, our robust Erlang FFI gives us complete JSON objects one by one
-      case
-        stream_request(url, body, fn(chunk) {
-          case bit_array.to_string(chunk) {
-            Ok(json_str) -> {
-              // Parse this single chunk as a response
-              case decode_response(json_str) {
-                Ok(parts) -> list.each(parts, on_part)
-                Error(_) -> Nil
-              }
-            }
-            Error(_) -> Nil
-          }
-        })
-      {
-        Ok(full_bit_array) -> {
-          case bit_array.to_string(full_bit_array) {
-            Ok(full_body) -> {
-              // The full body is a JSON array [{}, {}]
-              // We already streamed the parts, but we need to return the full list
-              case decode_stream_response(full_body, on_part) {
-                Ok(parts) -> Ok(parts)
-                Error(_) -> Error(Nil)
-              }
-            }
-            Error(_) -> Error(Nil)
-          }
-        }
-        Error(_) -> Error(Nil)
-      }
+      io.println("--- DEBUG: Response Body ---")
+      io.println(resp.body)
+      io.println("----------------------------")
     }
-    False -> {
-      case request.to(url) {
-        Ok(req) -> {
-          let req =
-            req
-            |> request.set_method(http.Post)
-            |> request.set_body(body)
-            |> request.set_header("content-type", "application/json")
+    False -> Nil
+  }
 
-          case httpc.send(req) {
-            Ok(resp) -> {
-              case debug {
-                True -> {
-                  io.println("--- DEBUG: Response Body ---")
-                  io.println(resp.body)
-                  io.println("----------------------------")
-                }
-                False -> Nil
-              }
-
-              case resp.status {
-                200 -> {
-                  case decode_response(resp.body) {
-                    Ok(parts) -> Ok(parts)
-                    Error(e) -> {
-                      io.println("--- API Error / Unexpected Response ---")
-                      io.println(
-                        "Error decoding response: " <> string.inspect(e),
-                      )
-                      Error(Nil)
-                    }
-                  }
-                }
-                _ -> {
-                  io.println("--- API Error ---")
-                  io.println("Status: " <> int.to_string(resp.status))
-                  io.println("Body: " <> resp.body)
-                  Error(Nil)
-                }
-              }
-            }
-            Error(err) -> {
-              io.println("--- Network Error ---")
-              io.println("Error: " <> string.inspect(err))
-              Error(Nil)
-            }
-          }
-        }
-        Error(_) -> {
-          io.println("--- URL Error ---")
+  case resp.status {
+    200 -> {
+      case decode_response(resp.body) {
+        Ok(parts) -> Ok(parts)
+        Error(e) -> {
+          io.println("--- API Error / Unexpected Response ---")
+          io.println("Error decoding response: " <> string.inspect(e))
           Error(Nil)
         }
       }
     }
+    _ -> {
+      io.println("--- API Error ---")
+      io.println("Status: " <> int.to_string(resp.status))
+      io.println("Body: " <> resp.body)
+      Error(Nil)
+    }
+  }
+}
+
+fn execute_streaming_call(
+  url: String,
+  body: String,
+  on_part: fn(types.Part) -> Nil,
+) -> Result(List(types.Part), Nil) {
+  // For streaming, our robust Erlang FFI gives us complete JSON objects one by one
+  let handle_chunk = fn(chunk) {
+    case bit_array.to_string(chunk) {
+      Ok(json_str) -> {
+        // Parse this single chunk as a response
+        case decode_response(json_str) {
+          Ok(parts) -> list.each(parts, on_part)
+          Error(_) -> Nil
+        }
+      }
+      Error(_) -> Nil
+    }
+  }
+
+  use full_bit_array <- result.try(stream_request(url, body, handle_chunk))
+
+  case bit_array.to_string(full_bit_array) {
+    Ok(full_body) -> {
+      // The full body is a JSON array [{}, {}]
+      // We already streamed the parts, but we need to return the full list
+      case decode_stream_response(full_body, on_part) {
+        Ok(parts) -> Ok(parts)
+        Error(_) -> Error(Nil)
+      }
+    }
+    Error(_) -> Error(Nil)
   }
 }
 
