@@ -32,7 +32,7 @@ pub fn new(name: String, description: String) -> ToolBuilder {
   )
 }
 
-/// Adds a string parameter to a tool's declaration.
+/// Adds a string parameter to a tool''s declaration.
 pub fn with_string_param(
   builder: ToolBuilder,
   name: String,
@@ -54,7 +54,7 @@ pub fn with_string_param(
   )
 }
 
-/// Adds an integer parameter to a tool's declaration.
+/// Adds an integer parameter to a tool''s declaration.
 pub fn with_int_param(
   builder: ToolBuilder,
   name: String,
