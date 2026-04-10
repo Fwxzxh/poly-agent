@@ -1,0 +1,1 @@
+-record(text, {text :: binary(), signature :: gleam@option:option(binary())}).

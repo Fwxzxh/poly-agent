@@ -1,0 +1,1 @@
+-record(function_response, {name :: binary(), response :: gleam@json:json()}).

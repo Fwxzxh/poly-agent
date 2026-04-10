@@ -1,0 +1,1 @@
+-record(thought_event, {text :: binary()}).
