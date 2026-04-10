@@ -1,0 +1,23 @@
+# Gleam build artifacts
+build/
+gleam.toml.lock
+
+# Environment variables / Secrets
+.env
+.env.test
+
+# Erlang/OTP
+erl_crash.dump
+*.beam
+*.hrl
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.elixir_ls/
+.vscode/
+.idea/
+*.swp
+*.swo
