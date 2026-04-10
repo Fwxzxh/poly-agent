@@ -31,6 +31,8 @@ pub type State {
     on_event: fn(types.AgentEvent) -> Nil,
     /// Whether to print raw requests and responses.
     debug: Bool,
+    /// Whether to stream responses from the provider.
+    streaming: Bool,
   )
 }
 
@@ -56,6 +58,7 @@ pub fn start(
   system_instruction: Option(String),
   on_event: fn(types.AgentEvent) -> Nil,
   debug: Bool,
+  streaming: Bool,
 ) {
   let initial_state =
     State(
@@ -67,6 +70,7 @@ pub fn start(
       tools: initial_tools,
       on_event: on_event,
       debug: debug,
+      streaming: streaming,
     )
 
   actor.new(initial_state)
@@ -92,6 +96,7 @@ fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) 
           state.on_event,
           10,
           state.debug,
+          state.streaming,
           reply_to,
         )
 
@@ -121,6 +126,7 @@ fn run_reasoning_loop(
   on_event: fn(types.AgentEvent) -> Nil,
   max_steps: Int,
   debug: Bool,
+  streaming: Bool,
   reply_to: Subject(AgentResponse),
 ) -> #(String, List(types.Message)) {
   case max_steps {
@@ -135,6 +141,13 @@ fn run_reasoning_loop(
           model,
           tool_declarations,
           debug,
+          streaming,
+          fn(part) {
+            case part {
+              types.Text(text, _) -> on_event(types.StreamTextEvent(text))
+              _ -> Nil
+            }
+          },
         )
 
       case response {
@@ -167,6 +180,7 @@ fn run_reasoning_loop(
                 on_event,
                 max_steps - 1,
                 debug,
+                streaming,
                 reply_to,
               )
             }

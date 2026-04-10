@@ -31,6 +31,7 @@ pub fn main() {
   let api_key = get_api_key()
   let model = get_model()
   let debug = is_debug_enabled()
+  let streaming = is_streaming_enabled()
   let available_tools = developer.get_tools()
 
   // Prepare system context with host information
@@ -49,6 +50,7 @@ pub fn main() {
       Some(system_prompt),
       handle_event,
       debug,
+      streaming,
     )
 
   let agent_subject = started.data
@@ -57,7 +59,7 @@ pub fn main() {
   io.println("Configuración cargada correctamente.")
   io.println("Escribe tu mensaje y presiona Enter. Escribe 'exit' para salir.")
 
-  chat_loop(agent_subject)
+  chat_loop(agent_subject, streaming)
 }
 
 fn get_api_key() -> String {
@@ -89,6 +91,13 @@ fn is_debug_enabled() -> Bool {
 
 fn is_verbose_enabled() -> Bool {
   case env.get_string("VERBOSE") {
+    Ok("true") -> True
+    _ -> False
+  }
+}
+
+fn is_streaming_enabled() -> Bool {
+  case env.get_string("STREAMING") {
     Ok("true") -> True
     _ -> False
   }
@@ -130,6 +139,9 @@ fn handle_event(event: types.AgentEvent) {
         }
       }
     }
+    types.StreamTextEvent(text) -> {
+      io.print(text)
+    }
   }
 }
 
@@ -137,7 +149,7 @@ fn handle_event(event: types.AgentEvent) {
 ///
 /// It uses a synchronous `process.receive_forever` to wait for the agent's
 /// full reasoning process to complete before prompting for the next input.
-fn chat_loop(agent_subject) {
+fn chat_loop(agent_subject, streaming: Bool) {
   io.print("> ")
   let input = read_line()
 
@@ -149,16 +161,21 @@ fn chat_loop(agent_subject) {
 
       // Block until the agent finishes its reasoning loop and responds.
       // The reasoning loop might involve multiple tool calls and approval requests.
-      wait_for_response(reply_subject)
-      chat_loop(agent_subject)
+      wait_for_response(reply_subject, streaming)
+      chat_loop(agent_subject, streaming)
     }
   }
 }
 
-fn wait_for_response(reply_subject) {
+fn wait_for_response(reply_subject, streaming: Bool) {
   let response = process.receive_forever(reply_subject)
   case response {
-    agent.FinalResponse(text) -> io.println("Agent: " <> text)
+    agent.FinalResponse(text) -> {
+      case streaming {
+        True -> io.println("")
+        False -> io.println("Agent: " <> text)
+      }
+    }
     agent.ApprovalRequest(name, args, reply_to) -> {
       let args_str = json.to_string(args)
       io.println(
@@ -176,7 +193,7 @@ fn wait_for_response(reply_subject) {
       }
       process.send(reply_to, approved)
       // Wait for the next part of the response (could be another tool call or final text)
-      wait_for_response(reply_subject)
+      wait_for_response(reply_subject, streaming)
     }
   }
 }

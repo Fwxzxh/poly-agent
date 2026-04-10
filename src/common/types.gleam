@@ -98,4 +98,6 @@ pub type AgentEvent {
   ToolStartEvent(name: String, args: json.Json)
   /// Emitted after a tool finishes execution with its result.
   ToolResultEvent(name: String, result: json.Json)
+  /// Emitted when a chunk of text is received during streaming.
+  StreamTextEvent(text: String)
 }

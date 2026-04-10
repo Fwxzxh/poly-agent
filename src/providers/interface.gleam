@@ -21,6 +21,8 @@ pub type Provider {
       String,
       List(FunctionDeclaration),
       Bool,
+      Bool,
+      fn(Part) -> Nil,
     ) ->
       Result(List(Part), Nil),
   )

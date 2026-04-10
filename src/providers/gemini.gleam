@@ -2,6 +2,7 @@
 //// It handles the conversion between common types and the JSON format expected by Gemini.
 
 import common/types
+import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request
@@ -9,6 +10,7 @@ import gleam/httpc
 import gleam/int
 import gleam/io
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 
@@ -197,6 +199,20 @@ fn identity(x: a) -> a {
   x
 }
 
+fn extract_text_from_chunk(chunk: String) -> String {
+  // Hacky way to extract text from a partial Gemini JSON chunk
+  // Look for "text": "..."
+  case string.split(chunk, on: "\"text\": \"") {
+    [_, rest, ..] -> {
+      case string.split(rest, on: "\"") {
+        [text, ..] -> string.replace(text, each: "\\n", with: "\n")
+        _ -> ""
+      }
+    }
+    _ -> ""
+  }
+}
+
 /// Makes the HTTP request to the Gemini API.
 pub fn call(
   history: List(types.Message),
@@ -205,11 +221,20 @@ pub fn call(
   model: String,
   tool_declarations: List(types.FunctionDeclaration),
   debug: Bool,
+  streaming: Bool,
+  on_part: fn(types.Part) -> Nil,
 ) -> Result(List(types.Part), Nil) {
+  let endpoint = case streaming {
+    True -> "streamGenerateContent"
+    False -> "generateContent"
+  }
+
   let url =
     "https://generativelanguage.googleapis.com/v1beta/models/"
     <> model
-    <> ":generateContent?key="
+    <> ":"
+    <> endpoint
+    <> "?key="
     <> api_key
 
   let body = build_request_body(history, system_instruction, tool_declarations)
@@ -223,54 +248,159 @@ pub fn call(
     False -> Nil
   }
 
-  case request.to(url) {
-    Ok(req) -> {
-      let req =
-        req
-        |> request.set_method(http.Post)
-        |> request.set_body(body)
-        |> request.set_header("content-type", "application/json")
-
-      case httpc.send(req) {
-        Ok(resp) -> {
-          case debug {
-            True -> {
-              io.println("--- DEBUG: Response Body ---")
-              io.println(resp.body)
-              io.println("----------------------------")
+  case streaming {
+    True -> {
+      // For streaming, we'll use a custom FFI to handle the chunks
+      case
+        stream_request(url, body, fn(chunk) {
+          // Try to extract text from this chunk and call on_part
+          case bit_array.to_string(chunk) {
+            Ok(s) -> {
+              let text = extract_text_from_chunk(s)
+              case text {
+                "" -> Nil
+                _ -> on_part(types.Text(text, None))
+              }
             }
-            False -> Nil
+            Error(_) -> Nil
           }
-
-          case resp.status {
-            200 -> {
-              case decode_response(resp.body) {
+        })
+      {
+        Ok(full_bit_array) -> {
+          case bit_array.to_string(full_bit_array) {
+            Ok(full_body) -> {
+              case decode_stream_response(full_body, on_part) {
                 Ok(parts) -> Ok(parts)
-                Error(e) -> {
-                  io.println("--- API Error / Unexpected Response ---")
-                  io.println("Error decoding response: " <> string.inspect(e))
+                Error(_) -> Error(Nil)
+              }
+            }
+            Error(_) -> Error(Nil)
+          }
+        }
+        Error(_) -> Error(Nil)
+      }
+    }
+    False -> {
+      case request.to(url) {
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Post)
+            |> request.set_body(body)
+            |> request.set_header("content-type", "application/json")
+
+          case httpc.send(req) {
+            Ok(resp) -> {
+              case debug {
+                True -> {
+                  io.println("--- DEBUG: Response Body ---")
+                  io.println(resp.body)
+                  io.println("----------------------------")
+                }
+                False -> Nil
+              }
+
+              case resp.status {
+                200 -> {
+                  case decode_response(resp.body) {
+                    Ok(parts) -> Ok(parts)
+                    Error(e) -> {
+                      io.println("--- API Error / Unexpected Response ---")
+                      io.println(
+                        "Error decoding response: " <> string.inspect(e),
+                      )
+                      Error(Nil)
+                    }
+                  }
+                }
+                _ -> {
+                  io.println("--- API Error ---")
+                  io.println("Status: " <> int.to_string(resp.status))
+                  io.println("Body: " <> resp.body)
                   Error(Nil)
                 }
               }
             }
-            _ -> {
-              io.println("--- API Error ---")
-              io.println("Status: " <> int.to_string(resp.status))
-              io.println("Body: " <> resp.body)
+            Error(err) -> {
+              io.println("--- Network Error ---")
+              io.println("Error: " <> string.inspect(err))
               Error(Nil)
             }
           }
         }
-        Error(err) -> {
-          io.println("--- Network Error ---")
-          io.println("Error: " <> string.inspect(err))
+        Error(_) -> {
+          io.println("--- URL Error ---")
           Error(Nil)
         }
       }
     }
-    Error(_) -> {
-      io.println("--- URL Error ---")
-      Error(Nil)
+  }
+}
+
+@external(erlang, "poly_ffi", "stream_request")
+fn stream_request(
+  url: String,
+  body: String,
+  on_chunk: fn(BitArray) -> Nil,
+) -> Result(BitArray, Nil)
+
+pub fn decode_stream_response(
+  json_string: String,
+  on_part: fn(types.Part) -> Nil,
+) -> Result(List(types.Part), json.DecodeError) {
+  // Gemini stream returns a JSON array of response objects
+  let decoder = decode.list(candidate_list_decoder())
+
+  case json.parse(from: json_string, using: decoder) {
+    Ok(chunks) -> {
+      let all_parts = list.flatten(chunks)
+      // Call on_part for each part if we want to simulate the stream after receiving all
+      // Actually, the real streaming happens in the FFI and calls a callback.
+      // But for the final result return, we flatten everything.
+      Ok(all_parts)
+    }
+    Error(e) -> Error(e)
+  }
+}
+
+fn candidate_list_decoder() -> decode.Decoder(List(types.Part)) {
+  let part_decoder =
+    decode.one_of(
+      {
+        use text <- decode.field("text", decode.string)
+        use sig <- decode.optional_field(
+          "thoughtSignature",
+          None,
+          decode.optional(decode.string),
+        )
+        use is_thought <- decode.optional_field("thought", False, decode.bool)
+        case is_thought {
+          True -> decode.success(types.Thought(text, sig))
+          False -> decode.success(types.Text(text, sig))
+        }
+      },
+      [
+        {
+          use name <- decode.subfield(["functionCall", "name"], decode.string)
+          use args <- decode.subfield(["functionCall", "args"], decode.dynamic)
+          use sig <- decode.optional_field(
+            "thoughtSignature",
+            None,
+            decode.optional(decode.string),
+          )
+          decode.success(types.FunctionCall(name, args, sig))
+        },
+      ],
+    )
+
+  {
+    use parts_list <- decode.field(
+      "candidates",
+      decode.list(decode.at(["content", "parts"], decode.list(part_decoder))),
+    )
+    case parts_list {
+      [parts, ..] -> decode.success(parts)
+      [] -> decode.success([])
     }
   }
 }
