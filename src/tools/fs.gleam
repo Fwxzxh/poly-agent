@@ -64,12 +64,34 @@ pub fn grep_tool() -> utils.Tool {
   |> utils.build_tool(grep_executor)
 }
 
+/// Returns the `find_files` tool.
+///
+/// This tool searches for files in a directory whose names contain a specific pattern.
+pub fn find_files_tool() -> utils.Tool {
+  utils.new(
+    "find_files",
+    "Searches for files by name pattern in a directory (recursive).",
+  )
+  |> utils.with_string_param(
+    "directory",
+    "The root directory to start searching from",
+    required: True,
+  )
+  |> utils.with_string_param(
+    "pattern",
+    "The pattern to look for in filenames",
+    required: True,
+  )
+  |> utils.build_tool(find_files_executor)
+}
+
 /// Returns the `write_file` tool.
 ///
 /// This tool allows the agent to create or overwrite a file with specific content.
 /// It takes `path` and `content` arguments.
 pub fn write_file_tool() -> utils.Tool {
   utils.new("write_file", "Writes content to a file on the local filesystem.")
+  |> utils.with_approval(True)
   |> utils.with_string_param(
     "path",
     "The absolute or relative path to the file",
@@ -134,6 +156,40 @@ fn write_file_executor(args: json.Json) -> json.Json {
         #(
           "error",
           json.string("Missing or invalid 'path' or 'content' arguments"),
+        ),
+      ])
+  }
+}
+
+fn find_files_executor(args: json.Json) -> json.Json {
+  let decoder = {
+    use directory <- decode.field("directory", decode.string)
+    use pattern <- decode.field("pattern", decode.string)
+    decode.success(#(directory, pattern))
+  }
+
+  case decode.run(cast_to_dynamic(args), decoder) {
+    Ok(#(dir, pattern)) -> {
+      case simplifile.get_files(dir) {
+        Ok(all_files) -> {
+          let matches =
+            list.filter(all_files, fn(file) { string.contains(file, pattern) })
+          json.object([#("files", json.array(matches, json.string))])
+        }
+        Error(err) ->
+          json.object([
+            #(
+              "error",
+              json.string("Could not search directory: " <> string.inspect(err)),
+            ),
+          ])
+      }
+    }
+    Error(_) ->
+      json.object([
+        #(
+          "error",
+          json.string("Missing or invalid 'directory' or 'pattern' arguments"),
         ),
       ])
   }

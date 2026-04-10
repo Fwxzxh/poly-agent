@@ -17,6 +17,7 @@ pub fn execute_command_tool() -> utils.Tool {
     "execute_command",
     "Executes a shell command on the local system and returns the output.",
   )
+  |> utils.with_approval(True)
   |> utils.with_string_param(
     "command",
     "The shell command to execute (e.g., 'ls -la' or 'grep')",

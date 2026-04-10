@@ -84,6 +84,16 @@ pub fn fs_grep_test() {
   json_str |> string.contains("line one") |> should.be_false
 }
 
+pub fn fs_find_files_test() {
+  let args = prepare_args("{\"directory\": \"src\", \"pattern\": \"agent\"}")
+  let tool = fs.find_files_tool()
+  let response = tool.executor(args)
+
+  let json_str = json.to_string(response)
+  json_str |> string.contains("\"files\":") |> should.be_true
+  json_str |> string.contains("agent.gleam") |> should.be_true
+}
+
 pub fn fs_read_file_test() {
   let args = prepare_args("{\"path\": \"gleam.toml\"}")
   let tool = fs.read_file_tool()

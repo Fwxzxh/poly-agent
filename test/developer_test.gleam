@@ -6,7 +6,7 @@ pub fn get_tools_test() {
   let tools = developer.get_tools()
 
   // Verify the number of tools in the developer skill
-  tools |> list.length |> should.equal(6)
+  tools |> list.length |> should.equal(7)
 
   // Verify that the expected tools are present by name
   let names = list.map(tools, fn(t) { t.declaration.name })
@@ -15,6 +15,7 @@ pub fn get_tools_test() {
   names |> list.contains("write_file") |> should.be_true
   names |> list.contains("list_files") |> should.be_true
   names |> list.contains("grep") |> should.be_true
+  names |> list.contains("find_files") |> should.be_true
   names |> list.contains("execute_command") |> should.be_true
   names |> list.contains("http_get") |> should.be_true
 }

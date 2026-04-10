@@ -35,9 +35,16 @@ pub type State {
 }
 
 /// Messages that the Agent actor can handle.
+pub type AgentResponse {
+  /// The final text response from the agent.
+  FinalResponse(String)
+  /// A request for the user to approve a tool execution.
+  ApprovalRequest(name: String, args: json.Json, reply_to: Subject(Bool))
+}
+
 pub type AgentMessage {
-  /// A message from the user. Includes a reply subject for the response.
-  UserMessage(content: String, reply_to: Subject(String))
+  /// A message from the user. Includes a reply subject for responses and requests.
+  UserMessage(content: String, reply_to: Subject(AgentResponse))
 }
 
 /// Starts the agent actor with an initial configuration.
@@ -85,9 +92,10 @@ fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) 
           state.on_event,
           10,
           state.debug,
+          reply_to,
         )
 
-      process.send(reply_to, response_text)
+      process.send(reply_to, FinalResponse(response_text))
       actor.continue(State(..state, history: final_history))
     }
   }
@@ -113,6 +121,7 @@ fn run_reasoning_loop(
   on_event: fn(types.AgentEvent) -> Nil,
   max_steps: Int,
   debug: Bool,
+  reply_to: Subject(AgentResponse),
 ) -> #(String, List(types.Message)) {
   case max_steps {
     0 -> #("I've reached the maximum number of reasoning steps.", history)
@@ -146,7 +155,7 @@ fn run_reasoning_loop(
             [] -> #(extract_text(parts), updated_history)
             calls -> {
               let tool_responses =
-                execute_tools(calls, available_tools, on_event)
+                execute_tools(calls, available_tools, on_event, reply_to)
               let tool_msg = types.Message("function", tool_responses)
               run_reasoning_loop(
                 list.append(updated_history, [tool_msg]),
@@ -158,6 +167,7 @@ fn run_reasoning_loop(
                 on_event,
                 max_steps - 1,
                 debug,
+                reply_to,
               )
             }
           }
@@ -186,28 +196,65 @@ fn handle_part_events(part: types.Part, on_event: fn(types.AgentEvent) -> Nil) {
 }
 
 /// Executes the tools requested by the model and returns the responses as message parts.
+/// This implementation executes tools in parallel using Erlang processes.
+/// If a tool requires approval, it pauses and waits for user input via the `reply_to` subject.
 pub fn execute_tools(
   calls: List(#(String, decode.Dynamic)),
   available_tools: List(utils.Tool),
   on_event: fn(types.AgentEvent) -> Nil,
+  reply_to: Subject(AgentResponse),
 ) -> List(types.Part) {
-  list.map(calls, fn(call) {
-    let #(name, args) = call
-    let tool = list.find(available_tools, fn(t) { t.declaration.name == name })
+  calls
+  |> list.map(fn(call) {
+    let call_reply_subject = process.new_subject()
+    process.spawn(fn() {
+      let #(name, args) = call
+      let tool =
+        list.find(available_tools, fn(t) { t.declaration.name == name })
 
-    case tool {
-      Ok(t) -> {
-        let response = t.executor(cast_to_json(args))
-        on_event(types.ToolResultEvent(name, response))
-        types.FunctionResponse(name, response)
+      let result = case tool {
+        Ok(t) -> {
+          let should_execute = case t.requires_approval {
+            True -> {
+              let approval_reply_subject = process.new_subject()
+              process.send(
+                reply_to,
+                ApprovalRequest(
+                  name,
+                  types.dynamic_to_json(args),
+                  approval_reply_subject,
+                ),
+              )
+              process.receive_forever(approval_reply_subject)
+            }
+            False -> True
+          }
+
+          case should_execute {
+            True -> {
+              let response = t.executor(cast_to_json(args))
+              on_event(types.ToolResultEvent(name, response))
+              types.FunctionResponse(name, response)
+            }
+            False -> {
+              let err =
+                json.object([#("error", json.string("User denied execution"))])
+              on_event(types.ToolResultEvent(name, err))
+              types.FunctionResponse(name, err)
+            }
+          }
+        }
+        Error(_) -> {
+          let err = json.object([#("error", json.string("Tool not found"))])
+          on_event(types.ToolResultEvent(name, err))
+          types.FunctionResponse(name, err)
+        }
       }
-      Error(_) -> {
-        let err = json.object([#("error", json.string("Tool not found"))])
-        on_event(types.ToolResultEvent(name, err))
-        types.FunctionResponse(name, err)
-      }
-    }
+      process.send(call_reply_subject, result)
+    })
+    call_reply_subject
   })
+  |> list.map(fn(sub) { process.receive_forever(sub) })
 }
 
 /// Helper to filter out and identify function calls from a list of parts.

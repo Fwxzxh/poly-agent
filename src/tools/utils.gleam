@@ -15,6 +15,8 @@ pub type Tool {
   Tool(
     /// The declaration of the function as expected by the AI provider.
     declaration: types.FunctionDeclaration,
+    /// Whether this tool requires manual approval before execution.
+    requires_approval: Bool,
     /// The function that will be executed when the model requests it.
     /// It takes a JSON object of arguments and returns a JSON result.
     executor: fn(json.Json) -> json.Json,
@@ -26,6 +28,7 @@ pub type ToolBuilder {
   ToolBuilder(
     name: String,
     description: String,
+    requires_approval: Bool,
     properties: List(#(String, json.Json)),
     required: List(String),
   )
@@ -36,9 +39,15 @@ pub fn new(name: String, description: String) -> ToolBuilder {
   ToolBuilder(
     name: name,
     description: description,
+    requires_approval: False,
     properties: [],
     required: [],
   )
+}
+
+/// Sets whether the tool requires manual approval.
+pub fn with_approval(builder: ToolBuilder, required: Bool) -> ToolBuilder {
+  ToolBuilder(..builder, requires_approval: required)
 }
 
 /// Adds a string parameter to a tool's declaration.
@@ -129,5 +138,9 @@ pub fn build_tool(
       parameters: Some(parameters),
     )
 
-  Tool(declaration: declaration, executor: executor)
+  Tool(
+    declaration: declaration,
+    requires_approval: builder.requires_approval,
+    executor: executor,
+  )
 }

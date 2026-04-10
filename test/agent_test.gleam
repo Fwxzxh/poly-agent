@@ -1,6 +1,7 @@
 import agent
 import common/types
 import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/json
 import gleam/option.{None}
 import gleeunit/should
@@ -57,7 +58,9 @@ pub fn execute_tools_test() {
     utils.new("test_tool", "A test tool")
     |> utils.build_tool(fn(_) { json.string("success") })
 
-  let responses = agent.execute_tools(calls, [tool], fn(_) { Nil })
+  let reply_subject = process.new_subject()
+  let responses =
+    agent.execute_tools(calls, [tool], fn(_) { Nil }, reply_subject)
 
   let assert [types.FunctionResponse(name, response)] = responses
   name |> should.equal("test_tool")
@@ -68,7 +71,8 @@ pub fn execute_tools_not_found_test() {
   let assert Ok(args) = json.parse("{}", using: decode.dynamic)
   let calls = [#("unknown", args)]
 
-  let responses = agent.execute_tools(calls, [], fn(_) { Nil })
+  let reply_subject = process.new_subject()
+  let responses = agent.execute_tools(calls, [], fn(_) { Nil }, reply_subject)
 
   let assert [types.FunctionResponse(name, response)] = responses
   name |> should.equal("unknown")

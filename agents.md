@@ -7,8 +7,8 @@ Poly es un framework de agentes de IA modular y extensible escrito en **Gleam**,
 - **Core (`src/agent.gleam`)**: Implementa el actor de Gleam (OTP) que gestiona el estado de la conversación y el bucle de razonamiento.
 - **Providers (`src/providers/`)**: Capa de abstracción para LLMs. Actualmente implementa `gemini.gleam`.
 - **Tools (`src/tools/`)**: Herramientas individuales que el agente puede ejecutar:
-  - `fs.gleam`: Lectura, escritura, listado (recursivo) y búsqueda (`grep`) de archivos.
-  - `shell.gleam`: Ejecución de comandos del sistema.
+  - `fs.gleam`: Lectura, escritura, listado (recursivo), búsqueda de contenido (`grep`) y búsqueda de archivos (`find_files`).
+  - `shell.gleam`: Ejecución de comandos del sistema (requiere aprobación).
   - `net.gleam`: Peticiones HTTP GET.
   - `system.gleam`: Información del host (SO, arquitectura).
 - **Skills (`src/skills/`)**: Agrupaciones lógicas de herramientas. `developer.gleam` agrupa las herramientas de sistema de archivos, shell y red.
@@ -29,6 +29,8 @@ Poly utiliza el modelo de razonamiento de Gemini para planificar sus acciones. E
 2. El agente entra en un `run_reasoning_loop`.
 3. El modelo genera pensamientos ("Thinking") y, si es necesario, llamadas a herramientas.
 4. Las herramientas se ejecutan localmente y sus resultados se devuelven al modelo.
+   - **Paralelismo**: Las herramientas se ejecutan en paralelo utilizando procesos de Erlang para minimizar la latencia.
+   - **Seguridad**: Ciertas herramientas (como ejecución de comandos o escritura de archivos) requieren aprobación manual del usuario a través de la CLI antes de ejecutarse.
 5. El proceso se repite (hasta un máximo de 10 pasos) hasta obtener una respuesta final.
 
 ## Desarrollo y Pruebas

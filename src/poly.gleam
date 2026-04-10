@@ -148,10 +148,35 @@ fn chat_loop(agent_subject) {
       process.send(agent_subject, agent.UserMessage(input, reply_subject))
 
       // Block until the agent finishes its reasoning loop and responds.
-      // The reasoning loop might involve multiple tool calls.
-      let response = process.receive_forever(reply_subject)
-      io.println("Agent: " <> response)
+      // The reasoning loop might involve multiple tool calls and approval requests.
+      wait_for_response(reply_subject)
       chat_loop(agent_subject)
+    }
+  }
+}
+
+fn wait_for_response(reply_subject) {
+  let response = process.receive_forever(reply_subject)
+  case response {
+    agent.FinalResponse(text) -> io.println("Agent: " <> text)
+    agent.ApprovalRequest(name, args, reply_to) -> {
+      let args_str = json.to_string(args)
+      io.println(
+        "\u{1b}[33m\u{1b}[1m> Approval Required: "
+        <> name
+        <> "("
+        <> args_str
+        <> ")\u{1b}[0m",
+      )
+      io.print("Allow execution? [y/N]: ")
+      let input = read_line()
+      let approved = case input {
+        "y\n" | "Y\n" | "yes\n" -> True
+        _ -> False
+      }
+      process.send(reply_to, approved)
+      // Wait for the next part of the response (could be another tool call or final text)
+      wait_for_response(reply_subject)
     }
   }
 }

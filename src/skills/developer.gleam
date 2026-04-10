@@ -13,6 +13,7 @@ pub fn get_tools() -> List(utils.Tool) {
     fs.write_file_tool(),
     fs.list_files_tool(),
     fs.grep_tool(),
+    fs.find_files_tool(),
     shell.execute_command_tool(),
     net.http_get_tool(),
   ]
