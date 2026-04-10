@@ -30,6 +30,60 @@ pub fn fs_list_files_test() {
   json_str |> string.contains("agent.gleam") |> should.be_true
 }
 
+pub fn fs_list_files_recursive_test() {
+  let args = prepare_args("{\"directory\": \"src\", \"recursive\": true}")
+  let tool = fs.list_files_tool()
+  let response = tool.executor(args)
+
+  let json_str = json.to_string(response)
+  json_str |> string.contains("\"files\":") |> should.be_true
+  // Should contain files from subdirectories
+  json_str |> string.contains("gemini.gleam") |> should.be_true
+}
+
+pub fn fs_write_file_test() {
+  let path = "test_write.tmp"
+  let content = "hello test content"
+  let args =
+    prepare_args(
+      "{\"path\": \"" <> path <> "\", \"content\": \"" <> content <> "\"}",
+    )
+  let tool = fs.write_file_tool()
+  let response = tool.executor(args)
+
+  let json_str = json.to_string(response)
+  json_str |> string.contains("\"status\":\"success\"") |> should.be_true
+
+  // Verify file was written (using read_file tool)
+  let read_args = prepare_args("{\"path\": \"" <> path <> "\"}")
+  let read_tool = fs.read_file_tool()
+  let read_response = read_tool.executor(read_args)
+  json.to_string(read_response) |> string.contains(content) |> should.be_true
+}
+
+pub fn fs_grep_test() {
+  let path = "test_grep.tmp"
+  let content = "line one\\nline match two\\nline three"
+
+  // Create file first
+  let write_args =
+    prepare_args(
+      "{\"path\": \"" <> path <> "\", \"content\": \"" <> content <> "\"}",
+    )
+  let write_tool = fs.write_file_tool()
+  write_tool.executor(write_args)
+
+  let args =
+    prepare_args("{\"path\": \"" <> path <> "\", \"pattern\": \"match\"}")
+  let tool = fs.grep_tool()
+  let response = tool.executor(args)
+
+  let json_str = json.to_string(response)
+  json_str |> string.contains("\"line\":2") |> should.be_true
+  json_str |> string.contains("line match two") |> should.be_true
+  json_str |> string.contains("line one") |> should.be_false
+}
+
 pub fn fs_read_file_test() {
   let args = prepare_args("{\"path\": \"gleam.toml\"}")
   let tool = fs.read_file_tool()

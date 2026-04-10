@@ -43,6 +43,7 @@ pub type AgentMessage {
 /// Starts the agent actor with an initial configuration.
 pub fn start(
   api_key: String,
+  model: String,
   provider: provider.Provider,
   initial_tools: List(utils.Tool),
   system_instruction: Option(String),
@@ -54,7 +55,7 @@ pub fn start(
       history: [],
       system_instruction: system_instruction,
       api_key: api_key,
-      model: "gemini-3.1-flash-lite-preview",
+      model: model,
       provider: provider,
       tools: initial_tools,
       on_event: on_event,

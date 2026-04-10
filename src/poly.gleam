@@ -29,6 +29,7 @@ pub fn main() {
   dot_env.load_default()
 
   let api_key = get_api_key()
+  let model = get_model()
   let debug = is_debug_enabled()
   let available_tools = developer.get_tools()
 
@@ -42,6 +43,7 @@ pub fn main() {
   let assert Ok(started) =
     agent.start(
       api_key,
+      model,
       gemini.gemini_provider(),
       available_tools,
       Some(system_prompt),
@@ -71,8 +73,22 @@ fn get_api_key() -> String {
   }
 }
 
+fn get_model() -> String {
+  case env.get_string("GOOGLE_MODEL") {
+    Ok(model) -> model
+    Error(_) -> "gemini-3.1-flash-lite-preview"
+  }
+}
+
 fn is_debug_enabled() -> Bool {
   case env.get_string("DEBUG") {
+    Ok("true") -> True
+    _ -> False
+  }
+}
+
+fn is_verbose_enabled() -> Bool {
+  case env.get_string("VERBOSE") {
     Ok("true") -> True
     _ -> False
   }
@@ -97,9 +113,22 @@ fn handle_event(event: types.AgentEvent) {
         <> ")\u{1b}[0m",
       )
     }
-    types.ToolResultEvent(_name, _result) -> {
-      // Raw tool results are suppressed to keep the UI clean
-      Nil
+    types.ToolResultEvent(name, result) -> {
+      case is_verbose_enabled() {
+        True -> {
+          let result_str = json.to_string(result)
+          io.println(
+            "\u{1b}[32m> Tool Result ["
+            <> name
+            <> "]: "
+            <> result_str
+            <> "\u{1b}[0m",
+          )
+        }
+        False -> {
+          io.println("\u{1b}[32m> Tool [" <> name <> "] completed.\u{1b}[0m")
+        }
+      }
     }
   }
 }

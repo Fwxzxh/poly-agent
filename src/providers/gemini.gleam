@@ -223,31 +223,53 @@ pub fn call(
     False -> Nil
   }
 
-  let assert Ok(req) = request.to(url)
-  let req =
-    req
-    |> request.set_method(http.Post)
-    |> request.set_body(body)
-    |> request.set_header("content-type", "application/json")
+  case request.to(url) {
+    Ok(req) -> {
+      let req =
+        req
+        |> request.set_method(http.Post)
+        |> request.set_body(body)
+        |> request.set_header("content-type", "application/json")
 
-  let assert Ok(resp) = httpc.send(req)
+      case httpc.send(req) {
+        Ok(resp) -> {
+          case debug {
+            True -> {
+              io.println("--- DEBUG: Response Body ---")
+              io.println(resp.body)
+              io.println("----------------------------")
+            }
+            False -> Nil
+          }
 
-  case debug {
-    True -> {
-      io.println("--- DEBUG: Response Body ---")
-      io.println(resp.body)
-      io.println("----------------------------")
+          case resp.status {
+            200 -> {
+              case decode_response(resp.body) {
+                Ok(parts) -> Ok(parts)
+                Error(e) -> {
+                  io.println("--- API Error / Unexpected Response ---")
+                  io.println("Error decoding response: " <> string.inspect(e))
+                  Error(Nil)
+                }
+              }
+            }
+            _ -> {
+              io.println("--- API Error ---")
+              io.println("Status: " <> int.to_string(resp.status))
+              io.println("Body: " <> resp.body)
+              Error(Nil)
+            }
+          }
+        }
+        Error(err) -> {
+          io.println("--- Network Error ---")
+          io.println("Error: " <> string.inspect(err))
+          Error(Nil)
+        }
+      }
     }
-    False -> Nil
-  }
-
-  case decode_response(resp.body) {
-    Ok(parts) -> Ok(parts)
-    Error(e) -> {
-      io.println("--- API Error / Unexpected Response ---")
-      io.println("Status: " <> int.to_string(resp.status))
-      io.println("Body: " <> resp.body)
-      io.println("Error details: " <> string.inspect(e))
+    Error(_) -> {
+      io.println("--- URL Error ---")
       Error(Nil)
     }
   }

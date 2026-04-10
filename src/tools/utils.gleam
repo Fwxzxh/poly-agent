@@ -85,6 +85,28 @@ pub fn with_int_param(
   )
 }
 
+/// Adds a boolean parameter to a tool's declaration.
+pub fn with_bool_param(
+  builder: ToolBuilder,
+  name: String,
+  description: String,
+  required required: Bool,
+) -> ToolBuilder {
+  let param =
+    json.object([
+      #("type", json.string("boolean")),
+      #("description", json.string(description)),
+    ])
+  ToolBuilder(
+    ..builder,
+    properties: list.append(builder.properties, [#(name, param)]),
+    required: case required {
+      True -> list.append(builder.required, [name])
+      False -> builder.required
+    },
+  )
+}
+
 /// Completes the tool building by providing an executor function.
 ///
 /// The executor should handle argument parsing (from JSON) and return
