@@ -1,5 +1,5 @@
 import agent
-import common/types as types
+import common/types
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{None}
@@ -31,7 +31,10 @@ pub fn get_function_calls_test() {
   // Use json.parse with decode.dynamic to get a Dynamic value for the test
   let assert Ok(args) = json.parse("{}", using: decode.dynamic)
 
-  let parts = [types.Text("Some text", None), types.FunctionCall("my_tool", args, None)]
+  let parts = [
+    types.Text("Some text", None),
+    types.FunctionCall("my_tool", args, None),
+  ]
 
   let calls = agent.get_function_calls(parts)
 
