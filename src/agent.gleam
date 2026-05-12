@@ -9,6 +9,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 import providers/interface as provider
 import tools/utils
@@ -68,7 +69,10 @@ pub fn start(
 }
 
 /// The main actor loop. Handles incoming messages and updates state.
-fn loop(state: State, message: AgentMessage) -> actor.Next(State, AgentMessage) {
+fn loop(
+  state: State,
+  message: AgentMessage,
+) -> actor.Next(State, AgentMessage) {
   case message {
     UserMessage(content, reply_to) -> {
       let user_msg = types.Message("user", [types.Text(content, None)])
@@ -115,59 +119,96 @@ fn run_reasoning_loop(
   case max_steps {
     0 -> #("I've reached the maximum number of reasoning steps.", history)
     _ -> {
-      let tool_declarations = list.map(available_tools, fn(t) { t.declaration })
       let response =
-        provider.call(
+        call_model(
           history,
           system_instruction,
-          config.api_key,
-          config.model,
-          tool_declarations,
-          config.debug,
-          config.streaming,
-          fn(part) {
-            case part {
-              types.Text(text, _) -> on_event(types.StreamTextEvent(text))
-              types.Thought(text, _) -> on_event(types.ThoughtEvent(text))
-              _ -> Nil
-            }
-          },
+          config,
+          provider,
+          available_tools,
+          on_event,
         )
 
       case response {
-        Error(_) -> {
-          #(
-            "I'm sorry, I encountered an error processing your request.",
+        Error(_) -> #(
+          "I'm sorry, I encountered an error processing your request.",
+          history,
+        )
+        Ok(parts) ->
+          handle_model_response(
+            parts,
             history,
+            system_instruction,
+            config,
+            provider,
+            available_tools,
+            on_event,
+            max_steps,
+            reply_to,
           )
-        }
-        Ok(parts) -> {
-          list.each(parts, fn(p) { handle_part_events(p, on_event) })
-          let model_msg = types.Message("model", parts)
-          let updated_history = list.append(history, [model_msg])
-
-          let function_calls = get_function_calls(parts)
-
-          case function_calls {
-            [] -> #(extract_text(parts), updated_history)
-            calls -> {
-              let tool_responses =
-                execute_tools(calls, available_tools, on_event, reply_to)
-              let tool_msg = types.Message("function", tool_responses)
-              run_reasoning_loop(
-                list.append(updated_history, [tool_msg]),
-                system_instruction,
-                config,
-                provider,
-                available_tools,
-                on_event,
-                max_steps - 1,
-                reply_to,
-              )
-            }
-          }
-        }
       }
+    }
+  }
+}
+
+/// Calls the AI provider and manages streaming events.
+fn call_model(
+  history: List(types.Message),
+  system_instruction: Option(String),
+  config: config.Config,
+  provider: provider.Provider,
+  available_tools: List(utils.Tool),
+  on_event: fn(types.AgentEvent) -> Nil,
+) -> Result(List(types.Part), Nil) {
+  let tool_declarations = list.map(available_tools, fn(t) { t.declaration })
+  provider.call(
+    history,
+    system_instruction,
+    config.api_key,
+    config.model,
+    tool_declarations,
+    config.debug,
+    config.streaming,
+    fn(part) {
+      case part {
+        types.Text(text, _) -> on_event(types.StreamTextEvent(text))
+        types.Thought(text, _) -> on_event(types.ThoughtEvent(text))
+        _ -> Nil
+      }
+    },
+  )
+  |> result.replace_error(Nil)
+}
+
+/// Decides whether to return a text response or continue the loop by executing tools.
+fn handle_model_response(
+  parts: List(types.Part),
+  history: List(types.Message),
+  system_instruction: Option(String),
+  config: config.Config,
+  provider: provider.Provider,
+  available_tools: List(utils.Tool),
+  on_event: fn(types.AgentEvent) -> Nil,
+  max_steps: Int,
+  reply_to: Subject(AgentResponse),
+) -> #(String, List(types.Message)) {
+  list.each(parts, fn(p) { handle_part_events(p, on_event) })
+  let updated_history = list.append(history, [types.Message("model", parts)])
+
+  case get_function_calls(parts) {
+    [] -> #(extract_text(parts), updated_history)
+    calls -> {
+      let responses = execute_tools(calls, available_tools, on_event, reply_to)
+      run_reasoning_loop(
+        list.append(updated_history, [types.Message("function", responses)]),
+        system_instruction,
+        config,
+        provider,
+        available_tools,
+        on_event,
+        max_steps - 1,
+        reply_to,
+      )
     }
   }
 }
@@ -201,55 +242,74 @@ pub fn execute_tools(
 ) -> List(types.Part) {
   calls
   |> list.map(fn(call) {
-    let call_reply_subject = process.new_subject()
+    let reply = process.new_subject()
     process.spawn(fn() {
-      let #(name, args) = call
-      let tool =
-        list.find(available_tools, fn(t) { t.declaration.name == name })
+      execute_single_tool(call, available_tools, on_event, reply_to)
+      |> process.send(reply, _)
+    })
+    reply
+  })
+  |> list.map(process.receive_forever)
+}
 
-      let result = case tool {
-        Ok(t) -> {
-          let should_execute = case t.requires_approval {
-            True -> {
-              let approval_reply_subject = process.new_subject()
-              process.send(
-                reply_to,
-                ApprovalRequest(
-                  name,
-                  types.dynamic_to_json(args),
-                  approval_reply_subject,
-                ),
-              )
-              process.receive_forever(approval_reply_subject)
-            }
-            False -> True
-          }
+/// Executes a single tool call. It handles finding the tool in the available list,
+/// checking for user approval if required, and executing the tool's logic.
+fn execute_single_tool(
+  call: #(String, decode.Dynamic),
+  available_tools: List(utils.Tool),
+  on_event: fn(types.AgentEvent) -> Nil,
+  reply_to: Subject(AgentResponse),
+) -> types.Part {
+  let #(name, args) = call
+  let tool_result =
+    list.find(available_tools, fn(t) { t.declaration.name == name })
 
-          case should_execute {
-            True -> {
-              let response = t.executor(cast_to_json(args))
-              on_event(types.ToolResultEvent(name, response))
-              types.FunctionResponse(name, response)
-            }
-            False -> {
-              let err =
-                json.object([#("error", json.string("User denied execution"))])
-              on_event(types.ToolResultEvent(name, err))
-              types.FunctionResponse(name, err)
-            }
-          }
-        }
-        Error(_) -> {
-          let err = json.object([#("error", json.string("Tool not found"))])
-          on_event(types.ToolResultEvent(name, err))
-          types.FunctionResponse(name, err)
+  case tool_result {
+    Error(_) -> handle_tool_error(name, "Tool not found", on_event)
+    Ok(tool) -> {
+      case check_approval(tool, name, args, reply_to) {
+        False -> handle_tool_error(name, "User denied execution", on_event)
+        True -> {
+          let response = tool.executor(cast_to_json(args))
+          on_event(types.ToolResultEvent(name, response))
+          types.FunctionResponse(name, response)
         }
       }
-      process.send(call_reply_subject, result)
-    })
-    call_reply_subject
-  })
-  |> list.map(fn(sub) { process.receive_forever(sub) })
+    }
+  }
+}
+
+/// Handles the approval flow for a tool. If the tool requires approval, it sends
+/// an `ApprovalRequest` and waits for a response.
+fn check_approval(
+  tool: utils.Tool,
+  name: String,
+  args: decode.Dynamic,
+  reply_to: Subject(AgentResponse),
+) -> Bool {
+  case tool.requires_approval {
+    False -> True
+    True -> {
+      let subject = process.new_subject()
+      process.send(
+        reply_to,
+        ApprovalRequest(name, types.dynamic_to_json(args), subject),
+      )
+      process.receive_forever(subject)
+    }
+  }
+}
+
+/// Creates a standard error response for tool execution failures and emits
+/// a `ToolResultEvent` with the error details.
+fn handle_tool_error(
+  name: String,
+  error_msg: String,
+  on_event: fn(types.AgentEvent) -> Nil,
+) -> types.Part {
+  let err = json.object([#("error", json.string(error_msg))])
+  on_event(types.ToolResultEvent(name, err))
+  types.FunctionResponse(name, err)
 }
 
 /// Helper to filter out and identify function calls from a list of parts.
